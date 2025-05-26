@@ -83,7 +83,7 @@ def train_gpt(metadatas, num_epochs, batch_size, grad_acumm, output_path, max_au
 
 
     # DVAE files
-    DVAE_CHECKPOINT_LINK = "https://coqui.gateway.scarf.sh/hf-coqui/XTTS-v2/main/dvae.pth"
+    DVAE_CHECKPOINT_LINK = f"https://coqui.gateway.scarf.sh/hf-coqui/XTTS-v2/main/dvae_{language}.pth"
     MEL_NORM_LINK = "https://coqui.gateway.scarf.sh/hf-coqui/XTTS-v2/main/mel_stats.pth"
 
     # Set the path to the downloaded files
@@ -166,7 +166,7 @@ def train_gpt(metadatas, num_epochs, batch_size, grad_acumm, output_path, max_au
     config.plot_step = 100
     config.log_model_step = 100
     config.save_step = save_step
-    config.save_n_checkpoints = 1
+    config.save_n_checkpoints = 5
     config.save_checkpoints = True
     config.print_eval = False
     config.optimizer = "AdamW"

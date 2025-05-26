@@ -12,3 +12,7 @@ test.py
 cps/
 vivoice-datasets/
 output/
+dataset/
+datasets-*/
+cuda/
+.env
