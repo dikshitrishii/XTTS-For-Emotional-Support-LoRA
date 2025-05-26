@@ -21,7 +21,7 @@ First, clone the repository and install the necessary dependencies:
 ```
 git clone https://github.com/nguyenhoanganh2002/XTTSv2-Finetuning-for-New-Languages.git
 cd XTTSv2-Finetuning-for-New-Languages
-pip install -r requirements.txt
+pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ## 2. Data Preparation
