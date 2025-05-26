@@ -83,7 +83,7 @@ def train_gpt(metadatas, num_epochs, batch_size, grad_acumm, output_path, max_au
 
 
     # DVAE files
-    DVAE_CHECKPOINT_LINK = f"https://coqui.gateway.scarf.sh/hf-coqui/XTTS-v2/main/dvae_{language}.pth"
+    DVAE_CHECKPOINT_LINK = f"https://coqui.gateway.scarf.sh/hf-coqui/XTTS-v2/main/dvae.pth"
     MEL_NORM_LINK = "https://coqui.gateway.scarf.sh/hf-coqui/XTTS-v2/main/mel_stats.pth"
 
     # Set the path to the downloaded files
@@ -94,6 +94,15 @@ def train_gpt(metadatas, num_epochs, batch_size, grad_acumm, output_path, max_au
     if not os.path.isfile(DVAE_CHECKPOINT) or not os.path.isfile(MEL_NORM_FILE):
         print(" > Downloading DVAE files!")
         ModelManager._download_model_files([MEL_NORM_LINK, DVAE_CHECKPOINT_LINK], CHECKPOINTS_OUT_PATH, progress_bar=True)
+
+    # add _language suffix to the dvae path
+    DVAE_CHECKPOINT = DVAE_CHECKPOINT.replace(".pth", f"_{language}.pth")
+    # check if the dvae checkpoint exists, if not fall back to the original one
+    if not os.path.isfile(DVAE_CHECKPOINT):
+        print(f" > DVAE checkpoint for language {language} not found, using the original one.")
+        DVAE_CHECKPOINT = os.path.join(CHECKPOINTS_OUT_PATH, "dvae.pth")
+    else:
+        print(f" > Using DVAE checkpoint for language {language}: {DVAE_CHECKPOINT}")
 
 
     # Download XTTS v2.0 checkpoint if needed
