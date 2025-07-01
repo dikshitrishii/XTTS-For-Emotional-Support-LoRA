@@ -8,11 +8,17 @@ from TTS.tts.models.xtts import Xtts
 
 # Device configuration
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-timestamp = "May-23-2025_01+20PM-8e59ec3"
+timestamp = "June-04-2025_01+40PM-ab790ff"
 # Model paths
-xtts_checkpoint = f"checkpoints/GPT_XTTS_FT-{timestamp}/checkpoint_5000.pth"
+xtts_checkpoint = f"checkpoints/GPT_XTTS_FT-{timestamp}/best_model_28040.pth"
 xtts_config = f"checkpoints/GPT_XTTS_FT-{timestamp}/config.json"
 xtts_vocab = "checkpoints/XTTS_v2.0_original_model_files/vocab.json"
+
+# #orignal
+
+# xtts_checkpoint = f"/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens/checkpoints/XTTS_v2.0_original_model_files/model.pth"
+# xtts_config = f"/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens/checkpoints/XTTS_v2.0_original_model_files/config.json"
+# xtts_vocab = "/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens/checkpoints/XTTS_v2.0_original_model_files/vocab.json"
 
 # Load model
 config = XttsConfig()
@@ -24,8 +30,9 @@ model.to(device)
 print("Model loaded successfully!")
 
 # Get voice conditioning from reference audio
-speaker_audio_file = "reference.wav"
-language = "gj"  # Gujarati language code
+reference_path='/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/datasets-1/wavs/train_6199.wav'
+speaker_audio_file = reference_path
+language = "en"  # Gujarati language code
 
 gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
     audio_path=speaker_audio_file,
@@ -40,9 +47,7 @@ gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
 # For longer texts, split into sentences
 # tts_texts = sent_tokenize(tts_text)
 tts_texts = [
-    "પોતાનાં બાળકોને કયા પ્રકારનું શિક્ષણ આપવું તે પસંદ કરવાનો પ્રથમ અધિકાર માબાપોને રહેશે.",
-    "કોમના સાંસ્કૃતિક જીવનમાં છૂટથી ભાગ લેવાનો, કલાઓનો આનંદ માણવાનો અને વૈજ્ઞાનિક પ્રગતિ અને તેના લાભોમાં ભાગીદાર થવાનો દરેક વ્યક્તિને અધિકાર છે.",
-    "માનવવ્યક્તિત્વના સંપૂર્ણ વિકાસ અને માનવહક્કો અને મૂળભૂત સ્વતંત્રતાઓ પ્રત્યેના માનને દઢિભૂત કરવા તરફ શિક્ષણનું લક્ષ રાખવામાં આવશે. બધાં રાષ્ટ્રો, જાતિ અથવા ધાર્મિક સમૂહો વચ્ચે તે સમજ, સહિષ્ણુતા અને મૈત્રી બઢાવશે અને શાંતિની જાળવણી માટેની સંયુકત રાષ્ટ્રોની પ્રવૃત્તિઓને આગળ ધપાવશે."
+    '<whisper>You know, with Chelsea, she was an adventurous little girl.</whisper>'
 ]
 
 # Process each sentence
@@ -65,7 +70,7 @@ for text in tqdm(tts_texts):
 out_wav = torch.cat(wav_chunks, dim=0).unsqueeze(0).cpu()
 
 # Save the audio
-torchaudio.save("output.wav", out_wav, 24000)
+torchaudio.save("output_default_ref.wav", out_wav, 24000)
 
 # # For Jupyter Notebook, play the audio
 # from IPython.display import Audio

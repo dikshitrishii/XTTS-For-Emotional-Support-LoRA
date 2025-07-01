@@ -20,7 +20,7 @@ ds = load_dataset(
     cache_dir=download_dir
 )
 
-base_dir = "datasets-1"
+base_dir = "datasets-2emos"
 wavs_dir = os.path.join(base_dir, "wavs")
 os.makedirs(wavs_dir, exist_ok=True)
 
@@ -36,10 +36,12 @@ def save_dataset(ds, base_dir, wavs_dir, eval_fraction=0.15):
     total_errors = 0
     start_time = time.time()
 
-    # --- Split train into train/eval ---
-    all_examples = []
-    for i, example in enumerate(ds["train"]):
-        all_examples.append(example)
+    # --- Filter for only happy and whisper styles ---
+    desired_styles = {"happy", "whisper"}
+    all_examples = [
+        example for example in ds["train"]
+        if example.get("style", "").lower() in desired_styles
+    ]
 
     n_total = len(all_examples)
     n_eval = math.ceil(n_total * eval_fraction)

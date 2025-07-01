@@ -10,7 +10,7 @@ def get_wav_duration(file_path):
     return duration
 
 # Folder path - update this to your wav folder location if needed
-folder_path = 'datasets-gj/wavs'
+folder_path = 'datasets-1/wavs'
 
 # Lists to hold durations
 train_durations = []

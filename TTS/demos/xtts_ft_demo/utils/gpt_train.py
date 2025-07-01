@@ -158,11 +158,17 @@ def train_gpt(language, num_epochs, batch_size, grad_acumm, train_csv, eval_csv,
     )
     trainer.fit()
 
-    # get the longest text audio file to use as speaker reference
-    samples_len = [len(item["text"].split(" ")) for item in train_samples]
-    longest_text_idx =  samples_len.index(max(samples_len))
-    speaker_ref = train_samples[longest_text_idx]["audio_file"]
+    default_df = pd.read_csv('/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/datasets-1/default_dataset.csv', sep='|')
+    # Step 2: Try to find any sample with emotion == "default" from the CSV
+    speaker_ref = None
+    if not default_df.empty:
+        speaker_ref = default_df.iloc[0]['audio_file']
 
+    # Step 3: If not found, fallback to the longest text sample in train_samples
+    if speaker_ref is None:
+        samples_len = [len(item["text"].split(" ")) for item in train_samples]
+        longest_text_idx = samples_len.index(max(samples_len))
+        speaker_ref = train_samples[longest_text_idx]["audio_file"]
     trainer_out_path = trainer.output_path
 
     # deallocate VRAM and RAM
