@@ -118,14 +118,14 @@ CUDA_VISIBLE_DEVICES=0 python train_gpt_xtts.py \
 ```bash
 CUDA_VISIBLE_DEVICES=0 python train_gpt_xtts.py \
 --output_path checkpoints/ \
---metadatas datasets-1/metadata_train.csv,datasets-1/metadata_eval.csv,vi datasets-2/metadata_train.csv,datasets-2/metadata_eval.csv,vi \
+--metadatas datasets-1/metadata_train.csv,datasets-1/metadata_eval.csv \
 --num_epochs 5 \
 --batch_size 8 \
 --grad_acumm 4 \
 --max_text_length 400 \
 --max_audio_length 330750 \
 --weight_decay 1e-2 \
---lr 5e-6 \
+--lr 5e-5 \
 --save_step 50000
 ```
 

@@ -1,6 +1,6 @@
 import os
 import gc
-
+import pandas as pd
 from trainer import Trainer, TrainerArgs
 
 from TTS.config.shared_configs import BaseDatasetConfig
@@ -158,11 +158,15 @@ def train_gpt(language, num_epochs, batch_size, grad_acumm, train_csv, eval_csv,
     )
     trainer.fit()
 
-    default_df = pd.read_csv('/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/datasets-1/default_dataset.csv', sep='|')
-    # Step 2: Try to find any sample with emotion == "default" from the CSV
+    # Step 1: Load the default emotion dataset
+    default_df = pd.read_csv('/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/datasets-1/default_dataset.csv', delimiter='|')
+    # Step 2: Try to find the default audio corresponding to the same text as in train_samples from new_dataset_without_default
     speaker_ref = None
-    if not default_df.empty:
-        speaker_ref = default_df.iloc[0]['audio_file']
+    if not default_df.empty and len(train_samples) > 0:
+        train_text = train_samples[0]["text"]
+        match = default_df[default_df["text"] == train_text]
+        if not match.empty:
+            speaker_ref = match.iloc[0]["audio_file"]
 
     # Step 3: If not found, fallback to the longest text sample in train_samples
     if speaker_ref is None:
