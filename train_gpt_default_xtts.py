@@ -183,7 +183,7 @@ def train_gpt(metadatas, num_epochs, batch_size, grad_acumm, output_path, max_au
     config.optimizer_params = {"betas": [0.9, 0.96], "eps": 1e-8, "weight_decay": weight_decay}
     config.lr = lr
     config.lr_scheduler = "MultiStepLR"
-    config.lr_scheduler_params = {"milestones": [50000 * 18, 150000 * 18, 300000 * 18], "gamma": 0.5, "last_epoch": -1}
+    config.lr_scheduler_params = {"milestones": [5000, 150000, 300000], "gamma": 0.5, "last_epoch": -1}
     config.test_sentences = []
 
     # init the model from config
