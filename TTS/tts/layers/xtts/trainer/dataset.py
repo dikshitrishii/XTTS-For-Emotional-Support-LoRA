@@ -131,7 +131,6 @@ class XTTSDataset(torch.utils.data.Dataset):
             cond, _, cond_idxs = get_prompt_slice(
                 audiopath, self.max_conditioning_length, self.min_conditioning_length, self.sample_rate, self.is_eval, sample["ref_file"]
             )
-
             # if use masking do not use cond_len
             cond_len = torch.nan
         else:
