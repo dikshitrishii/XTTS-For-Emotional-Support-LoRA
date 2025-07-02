@@ -10,8 +10,8 @@ from TTS.tts.models.xtts import Xtts
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 timestamp = "June-04-2025_01+40PM-ab790ff"
 # Model paths
-xtts_checkpoint = f"/home/ubuntu/Dikshit/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/checkpoints/GPT_XTTS_FT-July-01-2025_11+37AM-0ad2d75/checkpoint_6750.pth"
-xtts_config = f"/home/ubuntu/Dikshit/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/checkpoints/GPT_XTTS_FT-July-01-2025_11+37AM-0ad2d75/config.json"
+xtts_checkpoint = f"/home/ubuntu/Dikshit/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/checkpoints/GPT_XTTS_FT-July-01-2025_01+01PM-0ad2d75/checkpoint_1500.pth"
+xtts_config = f"/home/ubuntu/Dikshit/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/checkpoints/GPT_XTTS_FT-July-01-2025_01+01PM-0ad2d75/config.json"
 xtts_vocab = "checkpoints/XTTS_v2.0_original_model_files/vocab.json"
 
 # #orignal

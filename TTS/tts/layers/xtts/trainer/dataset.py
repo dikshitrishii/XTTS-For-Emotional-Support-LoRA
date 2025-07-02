@@ -119,6 +119,7 @@ class XTTSDataset(torch.utils.data.Dataset):
         text = str(sample["text"])
         tseq = self.get_text(text, sample["language"])
         audiopath = sample["audio_file"]
+        # referencee_path = sample['reference_path'] if 'reference_path' in sample else None
         wav = load_audio(audiopath, self.sample_rate)
         if text is None or len(text.strip()) == 0:
             raise ValueError
@@ -140,6 +141,8 @@ class XTTSDataset(torch.utils.data.Dataset):
                 if "reference_path" in sample and sample["reference_path"] is not None
                 else audiopath
             )
+            if ref_sample == audiopath:
+                print(f"Warning: reference sample is the same as audio sample {audiopath}. This may not be intended.")
             cond, cond_len, _ = get_prompt_slice(
                 ref_sample, self.max_conditioning_length, self.min_conditioning_length, self.sample_rate, self.is_eval, sample["ref_file"]
             )
