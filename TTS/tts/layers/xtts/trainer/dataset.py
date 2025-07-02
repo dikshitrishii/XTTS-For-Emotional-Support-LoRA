@@ -139,6 +139,8 @@ class XTTSDataset(torch.utils.data.Dataset):
                 if "reference_path" in sample and sample["reference_path"] is not None
                 else audiopath
             )
+            if ref_sample==audiopath:
+                print(f" > Warning: reference sample is the same as the audio sample {audiopath}, this may lead to problems with conditioning")
             cond, cond_len, _ = get_prompt_slice(
                 ref_sample, self.max_conditioning_length, self.min_conditioning_length, self.sample_rate, self.is_eval, sample["ref_file"]
             )
