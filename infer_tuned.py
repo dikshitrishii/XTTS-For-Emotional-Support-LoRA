@@ -10,8 +10,8 @@ from TTS.tts.models.xtts import Xtts
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 timestamp = "June-04-2025_01+40PM-ab790ff"
 # Model paths
-xtts_checkpoint = f"checkpoints/GPT_XTTS_FT-{timestamp}/best_model_28040.pth"
-xtts_config = f"checkpoints/GPT_XTTS_FT-{timestamp}/config.json"
+xtts_checkpoint = f"/home/ubuntu/Dikshit/XTTSv2-For-Emotional-Support/checkpoints/GPT_XTTS_FT-July-02-2025_12+28PM-0000000/checkpoint_4500.pth"
+xtts_config = f"/home/ubuntu/Dikshit/XTTSv2-For-Emotional-Support/checkpoints/GPT_XTTS_FT-July-02-2025_12+28PM-0000000/config.json"
 xtts_vocab = "checkpoints/XTTS_v2.0_original_model_files/vocab.json"
 
 # #orignal
@@ -30,7 +30,7 @@ model.to(device)
 print("Model loaded successfully!")
 
 # Get voice conditioning from reference audio
-reference_path='/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/datasets-1/wavs/train_6199.wav'
+reference_path="/home/ubuntu/Dikshit/XTTSv2-For-Emotional-Support/MoMo-Ref.wav"
 speaker_audio_file = reference_path
 language = "en"  # Gujarati language code
 
@@ -47,7 +47,7 @@ gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
 # For longer texts, split into sentences
 # tts_texts = sent_tokenize(tts_text)
 tts_texts = [
-    '<whisper>You know, with Chelsea, she was an adventurous little girl.</whisper>'
+    '<happy>Let\'s go to partyyyy. Wohoo!!!</happy>'
 ]
 
 # Process each sentence
@@ -70,7 +70,7 @@ for text in tqdm(tts_texts):
 out_wav = torch.cat(wav_chunks, dim=0).unsqueeze(0).cpu()
 
 # Save the audio
-torchaudio.save("output_default_ref.wav", out_wav, 24000)
+torchaudio.save("output_default_ref_happy.wav", out_wav, 24000)
 
 # # For Jupyter Notebook, play the audio
 # from IPython.display import Audio

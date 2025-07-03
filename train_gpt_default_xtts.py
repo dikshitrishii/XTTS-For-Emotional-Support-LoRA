@@ -216,7 +216,7 @@ def train_gpt(metadatas, num_epochs, batch_size, grad_acumm, output_path, max_au
     import pandas as pd
 
     # Step 1: Load the default emotion dataset
-    default_df = pd.read_csv('/home/ubuntu/Projects/Training/XTTSv2-Finetuning-for-Emotional-Tokens-gpt/datasets-1/default_dataset.csv', sep='|')
+    default_df = pd.read_csv('/home/ubuntu/Dikshit/XTTSv2-For-Emotional-Support/datasets-1/default_dataset.csv', sep='|')
     # Step 2: Try to find any sample with emotion == "default" from the CSV
     speaker_ref = None
     if not default_df.empty:
