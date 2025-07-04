@@ -16,3 +16,5 @@ dataset/
 datasets-*/
 cuda/
 .env
+anika_*.wav
+output-*
