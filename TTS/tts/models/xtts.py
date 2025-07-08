@@ -18,7 +18,6 @@ from TTS.utils.io import load_fsspec
 init_stream_support()
 
 # LoRA Implementation for Perceiver Resampler
-# LoRA Implementation for Perceiver Resampler
 class PerceiverLoRALinear(torch.nn.Module):
     def __init__(self, in_features, out_features, r=8, alpha=16, dropout=0.0):
         super().__init__()
@@ -49,7 +48,6 @@ class PerceiverLoRALinear(torch.nn.Module):
         return result
 
 
-# ✅ CORRECT: Standalone function outside the class
 def apply_lora_to_perceiver_resampler(model, r=8, alpha=16, dropout=0.05):
     """Apply LoRA specifically to Perceiver Resampler attention layers."""
     
@@ -235,7 +233,7 @@ class XttsArgs(Coqpit):
     cond_d_vector_in_each_upsampling_layer: bool = True
 
     # Perceiver LoRA configuration
-    use_perceiver_lora: bool = True
+    use_perceiver_lora: bool = False  # Default False for normal loading
     perceiver_lora_rank: int = 8
     perceiver_lora_alpha: int = 16
     perceiver_lora_dropout: float = 0.05
@@ -262,7 +260,7 @@ class Xtts(BaseTTS):
         self.register_buffer("mel_stats", torch.ones(80))
 
     def init_models(self):
-        """Initialize models with Perceiver Resampler LoRA integration."""
+        """Initialize models with optional Perceiver Resampler LoRA integration."""
         if self.tokenizer.tokenizer is not None:
             self.args.gpt_number_text_tokens = self.tokenizer.get_number_tokens()
             self.args.gpt_start_text_token = self.tokenizer.tokenizer.token_to_id("[START]")
@@ -285,16 +283,6 @@ class Xtts(BaseTTS):
                 use_perceiver_resampler=self.args.gpt_use_perceiver_resampler,
                 code_stride_len=self.args.gpt_code_stride_len,
             )
-
-            if hasattr(self.args, 'use_perceiver_lora') and self.args.use_perceiver_lora:
-                self.gpt = apply_lora_to_perceiver_resampler(
-                    self.gpt,
-                    r=getattr(self.args, 'perceiver_lora_rank', 8),
-                    alpha=getattr(self.args, 'perceiver_lora_alpha', 16),
-                    dropout=getattr(self.args, 'perceiver_lora_dropout', 0.05)
-                )
-                print("🎯 Perceiver Resampler LoRA adapters applied")
-                self.freeze_base_perceiver_weights()
 
         self.hifigan_decoder = HifiDecoder(
             input_sample_rate=self.args.input_sample_rate,
@@ -876,12 +864,30 @@ class Xtts(BaseTTS):
 
         checkpoint = self.get_compatible_checkpoint_state_dict(model_path)
 
+        # Check if model has LoRA parameters
+        model_has_lora = any("lora_" in name for name, _ in self.named_parameters())
+        checkpoint_has_lora = any("lora_" in key for key in checkpoint.keys())
+        
+        if model_has_lora and not checkpoint_has_lora:
+            print("⚠️ Model has LoRA parameters but checkpoint doesn't. Using non-strict loading.")
+            strict = False
+
         try:
-            self.load_state_dict(checkpoint, strict=strict)
-        except:
+            missing_keys, unexpected_keys = self.load_state_dict(checkpoint, strict=strict)
+            if missing_keys:
+                lora_missing = [k for k in missing_keys if "lora_" in k]
+                other_missing = [k for k in missing_keys if "lora_" not in k]
+                
+                if lora_missing:
+                    print(f"📝 LoRA parameters initialized randomly: {len(lora_missing)} parameters")
+                if other_missing:
+                    print(f"⚠️ Other missing parameters: {other_missing}")
+                    
+        except Exception as e:
             if eval:
                 self.gpt.init_gpt_for_inference(kv_cache=self.args.kv_cache)
-            self.load_state_dict(checkpoint, strict=strict)
+            missing_keys, unexpected_keys = self.load_state_dict(checkpoint, strict=False)
+            print(f"⚠️ Fallback loading completed with {len(missing_keys)} missing keys")
 
         if eval:
             self.hifigan_decoder.eval()

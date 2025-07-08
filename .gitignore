@@ -19,3 +19,4 @@ cuda/
 anika_*.wav
 output-*
 Dataset_for_final
+perceiver_lora_runs
