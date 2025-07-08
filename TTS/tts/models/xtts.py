@@ -425,19 +425,25 @@ class Xtts(BaseTTS):
     def device(self):
         return next(self.parameters()).device
 
-    @torch.inference_mode()
+    # CRITICAL FIX: Remove @torch.inference_mode() to enable gradient computation
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
-        """Compute the conditioning latents for the GPT model from the given audio."""
+        """Compute the conditioning latents for the GPT model from the given audio.
+        
+        NOTE: Removed @torch.inference_mode() to enable gradient computation during training.
+        """
         if sr != 22050:
             audio = torchaudio.functional.resample(audio, sr, 22050)
         if length > 0:
             audio = audio[:, : 22050 * length]
+        
         if self.args.gpt_use_perceiver_resampler:
             style_embs = []
             for i in range(0, audio.shape[1], 22050 * chunk_length):
                 audio_chunk = audio[:, i : i + 22050 * chunk_length]
+
                 if audio_chunk.size(-1) < 22050 * 0.33:
                     continue
+
                 mel_chunk = wav_to_mel_cloning(
                     audio_chunk,
                     mel_norms=self.mel_stats.cpu(),
@@ -451,8 +457,10 @@ class Xtts(BaseTTS):
                     f_max=8000,
                     n_mels=80,
                 )
+                # CRITICAL: This call must have gradients enabled
                 style_emb = self.gpt.get_style_emb(mel_chunk.to(self.device), None)
                 style_embs.append(style_emb)
+
             cond_latent = torch.stack(style_embs).mean(dim=0)
         else:
             mel = wav_to_mel_cloning(
@@ -469,9 +477,9 @@ class Xtts(BaseTTS):
                 n_mels=80,
             )
             cond_latent = self.gpt.get_style_emb(mel.to(self.device))
+        
         return cond_latent.transpose(1, 2)
 
-    # [Include all other existing methods from the base code...]
     @torch.inference_mode()
     def get_speaker_embedding(self, audio, sr):
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
