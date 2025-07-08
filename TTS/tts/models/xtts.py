@@ -106,33 +106,6 @@ def apply_lora_to_perceiver_resampler(model, r=8, alpha=16, dropout=0.05):
     return model
 
 
-def debug_model_structure(model, target_keywords=["perceiver", "resampler", "conditioning"]):
-    """Debug function to explore model structure."""
-    print("\n🔍 Model Structure Analysis:")
-    
-    def explore_module(module, name="", depth=0):
-        indent = "  " * depth
-        print(f"{indent}{name}: {type(module).__name__}")
-        
-        if any(keyword in name.lower() for keyword in target_keywords):
-            print(f"{indent}🎯 FOUND TARGET: {name}")
-            
-            # List all children
-            for child_name, child in module.named_children():
-                child_full_name = f"{name}.{child_name}" if name else child_name
-                if isinstance(child, torch.nn.Linear):
-                    print(f"{indent}  📍 Linear layer: {child_full_name} ({child.in_features} -> {child.out_features})")
-                else:
-                    explore_module(child, child_full_name, depth + 1)
-        
-        elif depth < 3:  # Limit depth to avoid too much output
-            for child_name, child in module.named_children():
-                child_full_name = f"{name}.{child_name}" if name else child_name
-                explore_module(child, child_full_name, depth + 1)
-    
-    explore_module(model)
-
-
 def wav_to_mel_cloning(
     wav,
     mel_norms_file="../experiments/clips_mel_norms.pth",
@@ -222,7 +195,7 @@ class XttsArgs(Coqpit):
     gpt_stop_audio_token: int = 8193
     gpt_code_stride_len: int = 1024
     gpt_use_masking_gt_prompt_approach: bool = True
-    gpt_use_perceiver_resampler: bool = True
+    gpt_use_perceiver_resampler: bool = True  # Enable Perceiver Resampler
 
     # HifiGAN Decoder params
     input_sample_rate: int = 22050
@@ -498,6 +471,7 @@ class Xtts(BaseTTS):
             cond_latent = self.gpt.get_style_emb(mel.to(self.device))
         return cond_latent.transpose(1, 2)
 
+    # [Include all other existing methods from the base code...]
     @torch.inference_mode()
     def get_speaker_embedding(self, audio, sr):
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
