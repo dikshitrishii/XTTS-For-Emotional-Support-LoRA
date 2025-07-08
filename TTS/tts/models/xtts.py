@@ -17,6 +17,123 @@ from TTS.utils.io import load_fsspec
 
 init_stream_support()
 
+# LoRA Implementation for Perceiver Resampler
+# LoRA Implementation for Perceiver Resampler
+class PerceiverLoRALinear(torch.nn.Module):
+    def __init__(self, in_features, out_features, r=8, alpha=16, dropout=0.0):
+        super().__init__()
+        self.r = r
+        self.alpha = alpha
+        self.scale = alpha / r if r > 0 else 1
+        self.dropout = torch.nn.Dropout(dropout) if dropout > 0 else torch.nn.Identity()
+        
+        self.weight = torch.nn.Parameter(torch.empty(out_features, in_features))
+        self.bias = torch.nn.Parameter(torch.zeros(out_features))
+        torch.nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+        
+        if r > 0:
+            self.lora_A = torch.nn.Parameter(torch.zeros(r, in_features))
+            self.lora_B = torch.nn.Parameter(torch.zeros(out_features, r))
+            torch.nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
+            torch.nn.init.zeros_(self.lora_B)
+        else:
+            self.lora_A = None
+            self.lora_B = None
+
+    def forward(self, x):
+        result = torch.nn.functional.linear(x, self.weight, self.bias)
+        if self.r > 0:
+            lora = self.dropout(x) @ self.lora_A.t()
+            lora = lora @ self.lora_B.t()
+            result = result + self.scale * lora
+        return result
+
+
+# ✅ CORRECT: Standalone function outside the class
+def apply_lora_to_perceiver_resampler(model, r=8, alpha=16, dropout=0.05):
+    """Apply LoRA specifically to Perceiver Resampler attention layers."""
+    
+    def find_and_replace_linear_layers(module, module_name="", depth=0):
+        """Recursively find and replace linear layers in Perceiver components."""
+        replaced_count = 0
+        
+        for name, child in module.named_children():
+            full_name = f"{module_name}.{name}" if module_name else name
+            
+            # Check if this is a Perceiver-related component
+            if any(keyword in full_name.lower() for keyword in ["perceiver", "resampler", "conditioning"]):
+                print(f"🔍 Exploring Perceiver component: {full_name} (depth: {depth})")
+                
+                # If it's a Linear layer, replace it
+                if isinstance(child, torch.nn.Linear):
+                    print(f"🔧 Applying LoRA to Linear layer: {full_name}")
+                    lora_linear = PerceiverLoRALinear(
+                        child.in_features,
+                        child.out_features,
+                        r=r, alpha=alpha, dropout=dropout
+                    )
+                    lora_linear.weight.data = child.weight.data.clone()
+                    if child.bias is not None:
+                        lora_linear.bias.data = child.bias.data.clone()
+                    setattr(module, name, lora_linear)
+                    replaced_count += 1
+                
+                # Recursively explore child modules
+                elif hasattr(child, 'named_children'):
+                    replaced_count += find_and_replace_linear_layers(child, full_name, depth + 1)
+            
+            # Also check for attention-related modules even outside Perceiver
+            elif any(keyword in name.lower() for keyword in ["attn", "attention", "query", "key", "value"]):
+                if isinstance(child, torch.nn.Linear):
+                    print(f"🔧 Applying LoRA to attention layer: {full_name}")
+                    lora_linear = PerceiverLoRALinear(
+                        child.in_features,
+                        child.out_features,
+                        r=r, alpha=alpha, dropout=dropout
+                    )
+                    lora_linear.weight.data = child.weight.data.clone()
+                    if child.bias is not None:
+                        lora_linear.bias.data = child.bias.data.clone()
+                    setattr(module, name, lora_linear)
+                    replaced_count += 1
+                elif hasattr(child, 'named_children'):
+                    replaced_count += find_and_replace_linear_layers(child, full_name, depth + 1)
+        
+        return replaced_count
+    
+    # Start the replacement process
+    total_replaced = find_and_replace_linear_layers(model)
+    print(f"🎯 Total LoRA layers applied: {total_replaced}")
+    
+    return model
+
+
+def debug_model_structure(model, target_keywords=["perceiver", "resampler", "conditioning"]):
+    """Debug function to explore model structure."""
+    print("\n🔍 Model Structure Analysis:")
+    
+    def explore_module(module, name="", depth=0):
+        indent = "  " * depth
+        print(f"{indent}{name}: {type(module).__name__}")
+        
+        if any(keyword in name.lower() for keyword in target_keywords):
+            print(f"{indent}🎯 FOUND TARGET: {name}")
+            
+            # List all children
+            for child_name, child in module.named_children():
+                child_full_name = f"{name}.{child_name}" if name else child_name
+                if isinstance(child, torch.nn.Linear):
+                    print(f"{indent}  📍 Linear layer: {child_full_name} ({child.in_features} -> {child.out_features})")
+                else:
+                    explore_module(child, child_full_name, depth + 1)
+        
+        elif depth < 3:  # Limit depth to avoid too much output
+            for child_name, child in module.named_children():
+                child_full_name = f"{name}.{child_name}" if name else child_name
+                explore_module(child, child_full_name, depth + 1)
+    
+    explore_module(model)
+
 
 def wav_to_mel_cloning(
     wav,
@@ -33,18 +150,6 @@ def wav_to_mel_cloning(
     f_max=8000,
     n_mels=80,
 ):
-    """
-    Convert waveform to mel-spectrogram with hard-coded parameters for cloning.
-
-    Args:
-        wav (torch.Tensor): Input waveform tensor.
-        mel_norms_file (str): Path to mel-spectrogram normalization file.
-        mel_norms (torch.Tensor): Mel-spectrogram normalization tensor.
-        device (torch.device): Device to use for computation.
-
-    Returns:
-        torch.Tensor: Mel-spectrogram tensor.
-    """
     mel_stft = torchaudio.transforms.MelSpectrogram(
         n_fft=n_fft,
         hop_length=hop_length,
@@ -67,38 +172,18 @@ def wav_to_mel_cloning(
 
 
 def load_audio(audiopath, sampling_rate):
-    # better load setting following: https://github.com/faroit/python_audio_loading_benchmark
-
-    # torchaudio should chose proper backend to load audio depending on platform
     audio, lsr = torchaudio.load(audiopath)
-
-    # stereo to mono if needed
     if audio.size(0) != 1:
         audio = torch.mean(audio, dim=0, keepdim=True)
-
     if lsr != sampling_rate:
         audio = torchaudio.functional.resample(audio, lsr, sampling_rate)
-
-    # Check some assumptions about audio range. This should be automatically fixed in load_wav_to_torch, but might not be in some edge cases, where we should squawk.
-    # '10' is arbitrarily chosen since it seems like audio will often "overdrive" the [-1,1] bounds.
     if torch.any(audio > 10) or not torch.any(audio < 0):
         print(f"Error with {audiopath}. Max={audio.max()} min={audio.min()}")
-    # clip audio invalid values
     audio.clip_(-1, 1)
     return audio
 
 
 def pad_or_truncate(t, length):
-    """
-    Ensure a given tensor t has a specified sequence length by either padding it with zeros or clipping it.
-
-    Args:
-        t (torch.Tensor): The input tensor to be padded or truncated.
-        length (int): The desired length of the tensor.
-
-    Returns:
-        torch.Tensor: The padded or truncated tensor.
-    """
     tp = t[..., :length]
     if t.shape[-1] == length:
         tp = t
@@ -109,47 +194,12 @@ def pad_or_truncate(t, length):
 
 @dataclass
 class XttsAudioConfig(Coqpit):
-    """
-    Configuration class for audio-related parameters in the XTTS model.
-
-    Args:
-        sample_rate (int): The sample rate in which the GPT operates.
-        output_sample_rate (int): The sample rate of the output audio waveform.
-    """
-
     sample_rate: int = 22050
     output_sample_rate: int = 24000
 
 
 @dataclass
 class XttsArgs(Coqpit):
-    """A dataclass to represent XTTS model arguments that define the model structure.
-
-    Args:
-        gpt_batch_size (int): The size of the auto-regressive batch.
-        enable_redaction (bool, optional): Whether to enable redaction. Defaults to True.
-        kv_cache (bool, optional): Whether to use the kv_cache. Defaults to True.
-        gpt_checkpoint (str, optional): The checkpoint for the autoregressive model. Defaults to None.
-        clvp_checkpoint (str, optional): The checkpoint for the ConditionalLatentVariablePerseq model. Defaults to None.
-        decoder_checkpoint (str, optional): The checkpoint for the DiffTTS model. Defaults to None.
-        num_chars (int, optional): The maximum number of characters to generate. Defaults to 255.
-
-        For GPT model:
-        gpt_max_audio_tokens (int, optional): The maximum mel tokens for the autoregressive model. Defaults to 604.
-        gpt_max_text_tokens (int, optional): The maximum text tokens for the autoregressive model. Defaults to 402.
-        gpt_max_prompt_tokens (int, optional): The maximum prompt tokens or the autoregressive model. Defaults to 70.
-        gpt_layers (int, optional): The number of layers for the autoregressive model. Defaults to 30.
-        gpt_n_model_channels (int, optional): The model dimension for the autoregressive model. Defaults to 1024.
-        gpt_n_heads (int, optional): The number of heads for the autoregressive model. Defaults to 16.
-        gpt_number_text_tokens (int, optional): The number of text tokens for the autoregressive model. Defaults to 255.
-        gpt_start_text_token (int, optional): The start text token for the autoregressive model. Defaults to 255.
-        gpt_checkpointing (bool, optional): Whether to use checkpointing for the autoregressive model. Defaults to False.
-        gpt_train_solo_embeddings (bool, optional): Whether to train embeddings for the autoregressive model. Defaults to False.
-        gpt_code_stride_len (int, optional): The hop_size of dvae and consequently of the gpt output. Defaults to 1024.
-        gpt_use_masking_gt_prompt_approach (bool, optional):  If True, it will use ground truth as prompt and it will mask the loss to avoid repetition. Defaults to True.
-        gpt_use_perceiver_resampler (bool, optional):  If True, it will use perceiver resampler from flamingo paper - https://arxiv.org/abs/2204.14198. Defaults to False.
-    """
-
     gpt_batch_size: int = 1
     enable_redaction: bool = False
     kv_cache: bool = True
@@ -174,7 +224,7 @@ class XttsArgs(Coqpit):
     gpt_stop_audio_token: int = 8193
     gpt_code_stride_len: int = 1024
     gpt_use_masking_gt_prompt_approach: bool = True
-    gpt_use_perceiver_resampler: bool = False
+    gpt_use_perceiver_resampler: bool = True
 
     # HifiGAN Decoder params
     input_sample_rate: int = 22050
@@ -184,31 +234,27 @@ class XttsArgs(Coqpit):
     d_vector_dim: int = 512
     cond_d_vector_in_each_upsampling_layer: bool = True
 
-    # constants
+    # Perceiver LoRA configuration
+    use_perceiver_lora: bool = True
+    perceiver_lora_rank: int = 8
+    perceiver_lora_alpha: int = 16
+    perceiver_lora_dropout: float = 0.05
+
     duration_const: int = 102400
 
 
 class Xtts(BaseTTS):
-    """ⓍTTS model implementation.
-
-    ❗ Currently it only supports inference.
-
-    Examples:
-        >>> from TTS.tts.configs.xtts_config import XttsConfig
-        >>> from TTS.tts.models.xtts import Xtts
-        >>> config = XttsConfig()
-        >>> model = Xtts.inif_from_config(config)
-        >>> model.load_checkpoint(config, checkpoint_dir="paths/to/models_dir/", eval=True)
-    """
+    """ⓍTTS model implementation with Perceiver Resampler LoRA support."""
 
     def __init__(self, config: Coqpit):
         super().__init__(config, ap=None, tokenizer=None)
         self.mel_stats_path = None
         self.config = config
         self.gpt_checkpoint = self.args.gpt_checkpoint
-        self.decoder_checkpoint = self.args.decoder_checkpoint  # TODO: check if this is even needed
+        self.decoder_checkpoint = self.args.decoder_checkpoint
         self.models_dir = config.model_dir
         self.gpt_batch_size = self.args.gpt_batch_size
+        self._training_mode = "inference"
 
         self.tokenizer = VoiceBpeTokenizer()
         self.gpt = None
@@ -216,7 +262,7 @@ class Xtts(BaseTTS):
         self.register_buffer("mel_stats", torch.ones(80))
 
     def init_models(self):
-        """Initialize the models. We do it here since we need to load the tokenizer first."""
+        """Initialize models with Perceiver Resampler LoRA integration."""
         if self.tokenizer.tokenizer is not None:
             self.args.gpt_number_text_tokens = self.tokenizer.get_number_tokens()
             self.args.gpt_start_text_token = self.tokenizer.tokenizer.token_to_id("[START]")
@@ -240,6 +286,16 @@ class Xtts(BaseTTS):
                 code_stride_len=self.args.gpt_code_stride_len,
             )
 
+            if hasattr(self.args, 'use_perceiver_lora') and self.args.use_perceiver_lora:
+                self.gpt = apply_lora_to_perceiver_resampler(
+                    self.gpt,
+                    r=getattr(self.args, 'perceiver_lora_rank', 8),
+                    alpha=getattr(self.args, 'perceiver_lora_alpha', 16),
+                    dropout=getattr(self.args, 'perceiver_lora_dropout', 0.05)
+                )
+                print("🎯 Perceiver Resampler LoRA adapters applied")
+                self.freeze_base_perceiver_weights()
+
         self.hifigan_decoder = HifiDecoder(
             input_sample_rate=self.args.input_sample_rate,
             output_sample_rate=self.args.output_sample_rate,
@@ -250,21 +306,167 @@ class Xtts(BaseTTS):
             cond_d_vector_in_each_upsampling_layer=self.args.cond_d_vector_in_each_upsampling_layer,
         )
 
+    # REQUIRED ABSTRACT METHOD IMPLEMENTATIONS
+    def forward(self, x):
+        """Required forward method implementation."""
+        raise NotImplementedError(
+            "XTTS has a dedicated trainer, please check the XTTS docs: https://tts.readthedocs.io/en/dev/models/xtts.html#training"
+        )
+
+    def train_step(self, batch, criterion):
+        """Required train_step method implementation."""
+        raise NotImplementedError(
+            "XTTS has a dedicated trainer, please check the XTTS docs: https://tts.readthedocs.io/en/dev/models/xtts.html#training"
+        )
+
+    def eval_step(self, batch, criterion):
+        """Required eval_step method implementation."""
+        raise NotImplementedError(
+            "XTTS has a dedicated trainer, please check the XTTS docs: https://tts.readthedocs.io/en/dev/models/xtts.html#training"
+        )
+
+    # Perceiver LoRA Training Mode Management
+    def set_perceiver_training_mode(self, mode="perceiver_lora"):
+        """Set training mode specifically for Perceiver Resampler."""
+        if mode == "perceiver_lora":
+            self.freeze_base_perceiver_weights()
+            self.train()
+            self._training_mode = "perceiver_lora"
+            print("🎯 Perceiver Resampler LoRA training mode activated")
+        elif mode == "full":
+            self.unfreeze_all_perceiver_weights()
+            self.train()
+            self._training_mode = "full"
+            print("🔥 Full Perceiver Resampler training mode activated")
+        elif mode == "inference":
+            self.eval()
+            self._training_mode = "inference"
+            for param in self.parameters():
+                param.requires_grad = False
+            print("🔮 Inference mode activated")
+        else:
+            raise ValueError("Mode must be 'perceiver_lora', 'full', or 'inference'")
+
+    def freeze_base_perceiver_weights(self):
+        """Freeze all Perceiver Resampler parameters except LoRA adapters."""
+        if self.gpt is None:
+            print("⚠️ GPT model not initialized yet")
+            return
+            
+        frozen_count = 0
+        trainable_count = 0
+        
+        for name, param in self.gpt.named_parameters():
+            if "lora_" in name and ("perceiver" in name.lower() or "resampler" in name.lower()):
+                param.requires_grad = True
+                trainable_count += param.numel()
+            else:
+                param.requires_grad = False
+                frozen_count += param.numel()
+        
+        if trainable_count > 0:
+            print(f"✅ Frozen {frozen_count:,} base parameters")
+            print(f"🎯 Trainable Perceiver LoRA parameters: {trainable_count:,}")
+            print(f"📊 Parameter efficiency: {trainable_count/(frozen_count + trainable_count)*100:.2f}%")
+        else:
+            print("⚠️ No Perceiver LoRA parameters found. Check your integration.")
+
+    def unfreeze_all_perceiver_weights(self):
+        """Unfreeze all Perceiver Resampler parameters for full fine-tuning."""
+        if self.gpt is None:
+            print("⚠️ GPT model not initialized yet")
+            return
+            
+        perceiver_params = 0
+        for name, param in self.gpt.named_parameters():
+            if "perceiver" in name.lower() or "resampler" in name.lower():
+                param.requires_grad = True
+                perceiver_params += param.numel()
+        
+        print(f"🔓 {perceiver_params:,} Perceiver Resampler parameters unfrozen for full training")
+
+    def get_perceiver_lora_parameters(self):
+        """Get only Perceiver Resampler LoRA parameters for optimizer."""
+        if self.gpt is None:
+            return []
+        return [p for n, p in self.gpt.named_parameters() 
+                if "lora_" in n and ("perceiver" in n.lower() or "resampler" in n.lower()) and p.requires_grad]
+
+    def get_perceiver_parameters(self):
+        """Get all Perceiver Resampler parameters (LoRA + base)."""
+        if self.gpt is None:
+            return []
+        return [p for n, p in self.gpt.named_parameters() 
+                if ("perceiver" in n.lower() or "resampler" in n.lower()) and p.requires_grad]
+
+    def print_perceiver_parameter_status(self):
+        """Print detailed Perceiver Resampler parameter status."""
+        total_perceiver = 0
+        trainable_perceiver = 0
+        lora_perceiver = 0
+        
+        for name, param in self.gpt.named_parameters():
+            if "perceiver" in name.lower() or "resampler" in name.lower():
+                total_perceiver += param.numel()
+                if param.requires_grad:
+                    trainable_perceiver += param.numel()
+                    if "lora_" in name:
+                        lora_perceiver += param.numel()
+        
+        print(f"\n🎯 Perceiver Resampler Parameter Status:")
+        print(f"├── Total Perceiver: {total_perceiver:,}")
+        print(f"├── Trainable Perceiver: {trainable_perceiver:,} ({trainable_perceiver/total_perceiver*100:.2f}%)")
+        print(f"├── LoRA Perceiver: {lora_perceiver:,} ({lora_perceiver/total_perceiver*100:.2f}%)")
+        print(f"├── Frozen Perceiver: {total_perceiver-trainable_perceiver:,} ({(total_perceiver-trainable_perceiver)/total_perceiver*100:.2f}%)")
+        print(f"└── Training Mode: {self._training_mode}")
+
+    def save_perceiver_lora_checkpoint(self, checkpoint_path):
+        """Save only Perceiver Resampler LoRA parameters."""
+        perceiver_lora_state_dict = {
+            k: v.cpu() for k, v in self.state_dict().items() 
+            if "lora_" in k and ("perceiver" in k.lower() or "resampler" in k.lower())
+        }
+        
+        if not perceiver_lora_state_dict:
+            print("⚠️ No Perceiver LoRA parameters found to save!")
+            return
+        
+        torch.save({
+            'perceiver_lora_state_dict': perceiver_lora_state_dict,
+            'perceiver_lora_config': {
+                'r': getattr(self.args, 'perceiver_lora_rank', 8),
+                'alpha': getattr(self.args, 'perceiver_lora_alpha', 16),
+                'dropout': getattr(self.args, 'perceiver_lora_dropout', 0.05)
+            },
+            'training_mode': self._training_mode
+        }, checkpoint_path)
+        
+        print(f"💾 Perceiver LoRA checkpoint saved: {checkpoint_path}")
+        print(f"🎯 Saved {len(perceiver_lora_state_dict)} Perceiver LoRA parameter tensors")
+
+    def load_perceiver_lora_checkpoint(self, checkpoint_path):
+        """Load Perceiver Resampler LoRA parameters."""
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        perceiver_lora_state_dict = checkpoint['perceiver_lora_state_dict']
+        
+        missing_keys, unexpected_keys = self.load_state_dict(perceiver_lora_state_dict, strict=False)
+        
+        print(f"🔄 Perceiver LoRA checkpoint loaded: {checkpoint_path}")
+        if missing_keys:
+            print(f"⚠️ Missing keys: {len(missing_keys)}")
+        if unexpected_keys:
+            print(f"⚠️ Unexpected keys: {len(unexpected_keys)}")
+        
+        if 'training_mode' in checkpoint:
+            self.set_perceiver_training_mode(checkpoint['training_mode'])
+
     @property
     def device(self):
         return next(self.parameters()).device
 
     @torch.inference_mode()
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
-        """Compute the conditioning latents for the GPT model from the given audio.
-
-        Args:
-            audio (tensor): audio tensor.
-            sr (int): Sample rate of the audio.
-            length (int): Length of the audio in seconds. If < 0, use the whole audio. Defaults to 30.
-            chunk_length (int): Length of the audio chunks in seconds. When `length == chunk_length`, the whole audio
-                is being used without chunking. It must be < `length`. Defaults to 6.
-        """
+        """Compute the conditioning latents for the GPT model from the given audio."""
         if sr != 22050:
             audio = torchaudio.functional.resample(audio, sr, 22050)
         if length > 0:
@@ -273,11 +475,8 @@ class Xtts(BaseTTS):
             style_embs = []
             for i in range(0, audio.shape[1], 22050 * chunk_length):
                 audio_chunk = audio[:, i : i + 22050 * chunk_length]
-
-                # if the chunk is too short ignore it 
                 if audio_chunk.size(-1) < 22050 * 0.33:
                     continue
-
                 mel_chunk = wav_to_mel_cloning(
                     audio_chunk,
                     mel_norms=self.mel_stats.cpu(),
@@ -293,8 +492,6 @@ class Xtts(BaseTTS):
                 )
                 style_emb = self.gpt.get_style_emb(mel_chunk.to(self.device), None)
                 style_embs.append(style_emb)
-
-            # mean style embedding
             cond_latent = torch.stack(style_embs).mean(dim=0)
         else:
             mel = wav_to_mel_cloning(
@@ -333,18 +530,7 @@ class Xtts(BaseTTS):
         sound_norm_refs=False,
         load_sr=22050,
     ):
-        """Get the conditioning latents for the GPT model from the given audio.
-
-        Args:
-            audio_path (str or List[str]): Path to reference audio file(s).
-            max_ref_length (int): Maximum length of each reference audio in seconds. Defaults to 30.
-            gpt_cond_len (int): Length of the audio used for gpt latents. Defaults to 6.
-            gpt_cond_chunk_len (int): Chunk length used for gpt latents. It must be <= gpt_conf_len. Defaults to 6.
-            librosa_trim_db (int, optional): Trim the audio using this value. If None, not trimming. Defaults to None.
-            sound_norm_refs (bool, optional): Whether to normalize the audio. Defaults to False.
-            load_sr (int, optional): Sample rate to load the audio. Defaults to 24000.
-        """
-        # deal with multiples references
+        """Get the conditioning latents for the GPT model from the given audio."""
         if not isinstance(audio_path, list):
             audio_paths = [audio_path]
         else:
@@ -361,17 +547,14 @@ class Xtts(BaseTTS):
             if librosa_trim_db is not None:
                 audio = librosa.effects.trim(audio, top_db=librosa_trim_db)[0]
 
-            # compute latents for the decoder
             speaker_embedding = self.get_speaker_embedding(audio, load_sr)
             speaker_embeddings.append(speaker_embedding)
-
             audios.append(audio)
 
-        # merge all the audios and compute the latents for the gpt
         full_audio = torch.cat(audios, dim=-1)
         gpt_cond_latents = self.get_gpt_cond_latents(
             full_audio, load_sr, length=gpt_cond_len, chunk_length=gpt_cond_chunk_len
-        )  # [1, 1024, T]
+        )
 
         if speaker_embeddings:
             speaker_embedding = torch.stack(speaker_embeddings)
@@ -380,25 +563,11 @@ class Xtts(BaseTTS):
         return gpt_cond_latents, speaker_embedding
 
     def synthesize(self, text, config, speaker_wav, language, speaker_id=None, **kwargs):
-        """Synthesize speech with the given input text.
-
-        Args:
-            text (str): Input text.
-            config (XttsConfig): Config with inference parameters.
-            speaker_wav (list): List of paths to the speaker audio files to be used for cloning.
-            language (str): Language ID of the speaker.
-            **kwargs: Inference settings. See `inference()`.
-
-        Returns:
-            A dictionary of the output values with `wav` as output waveform, `deterministic_seed` as seed used at inference,
-            `text_input` as text token IDs after tokenizer, `voice_samples` as samples used for cloning, `conditioning_latents`
-            as latents used at inference.
-
-        """
+        """Synthesize speech with the given input text."""
         assert (
             "zh-cn" if language == "zh" else language in self.config.languages
         ), f" ❗ Language {language} is not supported. Supported languages are {self.config.languages}"
-        # Use generally found best tuning knobs for generation.
+        
         settings = {
             "temperature": config.temperature,
             "length_penalty": config.length_penalty,
@@ -406,10 +575,12 @@ class Xtts(BaseTTS):
             "top_k": config.top_k,
             "top_p": config.top_p,
         }
-        settings.update(kwargs)  # allow overriding of preset settings with kwargs
+        settings.update(kwargs)
+        
         if speaker_id is not None:
             gpt_cond_latent, speaker_embedding = self.speaker_manager.speakers[speaker_id].values()
             return self.inference(text, language, gpt_cond_latent, speaker_embedding, **settings)
+        
         settings.update({
             "gpt_cond_len": config.gpt_cond_len,
             "gpt_cond_chunk_len": config.gpt_cond_chunk_len,
@@ -424,59 +595,19 @@ class Xtts(BaseTTS):
         text,
         ref_audio_path,
         language,
-        # GPT inference
         temperature=0.75,
         length_penalty=1.0,
         repetition_penalty=10.0,
         top_k=50,
         top_p=0.85,
         do_sample=True,
-        # Cloning
         gpt_cond_len=30,
         gpt_cond_chunk_len=6,
         max_ref_len=10,
         sound_norm_refs=False,
         **hf_generate_kwargs,
     ):
-        """
-        This function produces an audio clip of the given text being spoken with the given reference voice.
-
-        Args:
-            text: (str) Text to be spoken.
-
-            ref_audio_path: (str) Path to a reference audio file to be used for cloning. This audio file should be >3
-                seconds long.
-
-            language: (str) Language of the voice to be generated.
-
-            temperature: (float) The softmax temperature of the autoregressive model. Defaults to 0.65.
-
-            length_penalty: (float) A length penalty applied to the autoregressive decoder. Higher settings causes the
-                model to produce more terse outputs. Defaults to 1.0.
-
-            repetition_penalty: (float) A penalty that prevents the autoregressive decoder from repeating itself during
-                decoding. Can be used to reduce the incidence of long silences or "uhhhhhhs", etc. Defaults to 2.0.
-
-            top_k: (int) K value used in top-k sampling. [0,inf]. Lower values mean the decoder produces more "likely"
-                (aka boring) outputs. Defaults to 50.
-
-            top_p: (float) P value used in nucleus sampling. (0,1]. Lower values mean the decoder produces more "likely"
-                (aka boring) outputs. Defaults to 0.8.
-
-            gpt_cond_len: (int) Length of the audio used for cloning. If audio is shorter, then audio length is used
-                else the first `gpt_cond_len` secs is used. Defaults to 30 seconds.
-
-            gpt_cond_chunk_len: (int) Chunk length used for cloning. It must be <= `gpt_cond_len`.
-                If gpt_cond_len == gpt_cond_chunk_len, no chunking. Defaults to 6 seconds.
-
-            hf_generate_kwargs: (**kwargs) The huggingface Transformers generate API is used for the autoregressive
-                transformer. Extra keyword args fed to this function get forwarded directly to that API. Documentation
-                here: https://huggingface.co/docs/transformers/internal/generation_utils
-
-        Returns:
-            Generated audio clip(s) as a torch tensor. Shape 1,S if k=1 else, (k,1,S) where S is the sample length.
-            Sample rate is 24kHz.
-        """
+        """This function produces an audio clip of the given text being spoken with the given reference voice."""
         (gpt_cond_latent, speaker_embedding) = self.get_conditioning_latents(
             audio_path=ref_audio_path,
             gpt_cond_len=gpt_cond_len,
@@ -506,7 +637,6 @@ class Xtts(BaseTTS):
         language,
         gpt_cond_latent,
         speaker_embedding,
-        # GPT inference
         temperature=0.75,
         length_penalty=1.0,
         repetition_penalty=10.0,
@@ -518,10 +648,11 @@ class Xtts(BaseTTS):
         enable_text_splitting=False,
         **hf_generate_kwargs,
     ):
-        language = language.split("-")[0]  # remove the country code
+        language = language.split("-")[0]
         length_scale = 1.0 / max(speed, 0.05)
         gpt_cond_latent = gpt_cond_latent.to(self.device)
         speaker_embedding = speaker_embedding.to(self.device)
+        
         if enable_text_splitting:
             text = split_sentence(text, language, self.tokenizer.char_limits.get(language, 250))
         else:
@@ -591,13 +722,10 @@ class Xtts(BaseTTS):
         if wav_gen_prev is not None:
             wav_chunk = wav_gen[(wav_gen_prev.shape[0] - overlap_len) : -overlap_len]
         if wav_overlap is not None:
-            # cross fade the overlap section
             if overlap_len > len(wav_chunk):
-                # wav_chunk is smaller than overlap_len, pass on last wav_gen
                 if wav_gen_prev is not None:
                     wav_chunk = wav_gen[(wav_gen_prev.shape[0] - overlap_len) :]
                 else:
-                    # not expecting will hit here as problem happens on last chunk
                     wav_chunk = wav_gen[-overlap_len:]
                 return wav_chunk, wav_gen, None
             else:
@@ -617,10 +745,8 @@ class Xtts(BaseTTS):
         language,
         gpt_cond_latent,
         speaker_embedding,
-        # Streaming
         stream_chunk_size=20,
         overlap_wav_len=1024,
-        # GPT inference
         temperature=0.75,
         length_penalty=1.0,
         repetition_penalty=10.0,
@@ -631,10 +757,11 @@ class Xtts(BaseTTS):
         enable_text_splitting=False,
         **hf_generate_kwargs,
     ):
-        language = language.split("-")[0]  # remove the country code
+        language = language.split("-")[0]
         length_scale = 1.0 / max(speed, 0.05)
         gpt_cond_latent = gpt_cond_latent.to(self.device)
         speaker_embedding = speaker_embedding.to(self.device)
+        
         if enable_text_splitting:
             text = split_sentence(text, language, self.tokenizer.char_limits.get(language, 250))
         else:
@@ -694,38 +821,26 @@ class Xtts(BaseTTS):
                     last_tokens = []
                     yield wav_chunk
 
-    def forward(self):
-        raise NotImplementedError(
-            "XTTS has a dedicated trainer, please check the XTTS docs: https://tts.readthedocs.io/en/dev/models/xtts.html#training"
-        )
-
-    def eval_step(self):
-        raise NotImplementedError(
-            "XTTS has a dedicated trainer, please check the XTTS docs: https://tts.readthedocs.io/en/dev/models/xtts.html#training"
-        )
-
     @staticmethod
-    def init_from_config(config: "XttsConfig", **kwargs):  # pylint: disable=unused-argument
+    def init_from_config(config: "XttsConfig", **kwargs):
         return Xtts(config)
 
-    def eval(self):  # pylint: disable=redefined-builtin
-        """Sets the model to evaluation mode. Overrides the default eval() method to also set the GPT model to eval mode."""
-        self.gpt.init_gpt_for_inference()
+    def eval(self):
+        """Sets the model to evaluation mode."""
+        if self.gpt is not None:
+            self.gpt.init_gpt_for_inference()
         super().eval()
 
     def get_compatible_checkpoint_state_dict(self, model_path):
         checkpoint = load_fsspec(model_path, map_location=torch.device("cpu"))["model"]
-        # remove xtts gpt trainer extra keys
         ignore_keys = ["torch_mel_spectrogram_style_encoder", "torch_mel_spectrogram_dvae", "dvae"]
         for key in list(checkpoint.keys()):
-            # check if it is from the coqui Trainer if so convert it
             if key.startswith("xtts."):
                 new_key = key.replace("xtts.", "")
                 checkpoint[new_key] = checkpoint[key]
                 del checkpoint[key]
                 key = new_key
 
-            # remove unused keys
             if key.split(".")[0] in ignore_keys:
                 del checkpoint[key]
 
@@ -742,21 +857,7 @@ class Xtts(BaseTTS):
         use_deepspeed=False,
         speaker_file_path=None,
     ):
-        """
-        Loads a checkpoint from disk and initializes the model's state and tokenizer.
-
-        Args:
-            config (dict): The configuration dictionary for the model.
-            checkpoint_dir (str, optional): The directory where the checkpoint is stored. Defaults to None.
-            checkpoint_path (str, optional): The path to the checkpoint file. Defaults to None.
-            vocab_path (str, optional): The path to the vocabulary file. Defaults to None.
-            eval (bool, optional): Whether to set the model to evaluation mode. Defaults to True.
-            strict (bool, optional): Whether to strictly enforce that the keys in the checkpoint match the keys in the model. Defaults to True.
-
-        Returns:
-            None
-        """
-
+        """Loads a checkpoint from disk and initializes the model's state and tokenizer."""
         model_path = checkpoint_path or os.path.join(checkpoint_dir, "model.pth")
         vocab_path = vocab_path or os.path.join(checkpoint_dir, "vocab.json")
 
@@ -775,7 +876,6 @@ class Xtts(BaseTTS):
 
         checkpoint = self.get_compatible_checkpoint_state_dict(model_path)
 
-        # deal with v1 and v1.1. V1 has the init_gpt_for_inference keys, v1.1 do not
         try:
             self.load_state_dict(checkpoint, strict=strict)
         except:
@@ -787,8 +887,3 @@ class Xtts(BaseTTS):
             self.hifigan_decoder.eval()
             self.gpt.init_gpt_for_inference(kv_cache=self.args.kv_cache, use_deepspeed=use_deepspeed)
             self.gpt.eval()
-
-    def train_step(self):
-        raise NotImplementedError(
-            "XTTS has a dedicated trainer, please check the XTTS docs: https://tts.readthedocs.io/en/dev/models/xtts.html#training"
-        )
