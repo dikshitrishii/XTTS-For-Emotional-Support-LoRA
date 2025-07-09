@@ -106,6 +106,33 @@ def apply_lora_to_perceiver_resampler(model, r=8, alpha=16, dropout=0.05):
     return model
 
 
+def debug_model_structure(model, target_keywords=["perceiver", "resampler", "conditioning"]):
+    """Debug function to explore model structure."""
+    print("\n🔍 Model Structure Analysis:")
+    
+    def explore_module(module, name="", depth=0):
+        indent = "  " * depth
+        print(f"{indent}{name}: {type(module).__name__}")
+        
+        if any(keyword in name.lower() for keyword in target_keywords):
+            print(f"{indent}🎯 FOUND TARGET: {name}")
+            
+            # List all children
+            for child_name, child in module.named_children():
+                child_full_name = f"{name}.{child_name}" if name else child_name
+                if isinstance(child, torch.nn.Linear):
+                    print(f"{indent}  📍 Linear layer: {child_full_name} ({child.in_features} -> {child.out_features})")
+                else:
+                    explore_module(child, child_full_name, depth + 1)
+        
+        elif depth < 3:  # Limit depth to avoid too much output
+            for child_name, child in module.named_children():
+                child_full_name = f"{name}.{child_name}" if name else child_name
+                explore_module(child, child_full_name, depth + 1)
+    
+    explore_module(model)
+
+
 def wav_to_mel_cloning(
     wav,
     mel_norms_file="../experiments/clips_mel_norms.pth",
@@ -195,7 +222,7 @@ class XttsArgs(Coqpit):
     gpt_stop_audio_token: int = 8193
     gpt_code_stride_len: int = 1024
     gpt_use_masking_gt_prompt_approach: bool = True
-    gpt_use_perceiver_resampler: bool = True  # Enable Perceiver Resampler
+    gpt_use_perceiver_resampler: bool = True
 
     # HifiGAN Decoder params
     input_sample_rate: int = 22050
@@ -207,7 +234,7 @@ class XttsArgs(Coqpit):
 
     # Perceiver LoRA configuration
     use_perceiver_lora: bool = False  # Default False for normal loading
-    perceiver_lora_rank: int = 8
+    perceiver_lora_rank: int = 64
     perceiver_lora_alpha: int = 16
     perceiver_lora_dropout: float = 0.05
 
@@ -425,25 +452,19 @@ class Xtts(BaseTTS):
     def device(self):
         return next(self.parameters()).device
 
-    # CRITICAL FIX: Remove @torch.inference_mode() to enable gradient computation
+    @torch.inference_mode()
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
-        """Compute the conditioning latents for the GPT model from the given audio.
-        
-        NOTE: Removed @torch.inference_mode() to enable gradient computation during training.
-        """
+        """Compute the conditioning latents for the GPT model from the given audio."""
         if sr != 22050:
             audio = torchaudio.functional.resample(audio, sr, 22050)
         if length > 0:
             audio = audio[:, : 22050 * length]
-        
         if self.args.gpt_use_perceiver_resampler:
             style_embs = []
             for i in range(0, audio.shape[1], 22050 * chunk_length):
                 audio_chunk = audio[:, i : i + 22050 * chunk_length]
-
                 if audio_chunk.size(-1) < 22050 * 0.33:
                     continue
-
                 mel_chunk = wav_to_mel_cloning(
                     audio_chunk,
                     mel_norms=self.mel_stats.cpu(),
@@ -457,10 +478,8 @@ class Xtts(BaseTTS):
                     f_max=8000,
                     n_mels=80,
                 )
-                # CRITICAL: This call must have gradients enabled
                 style_emb = self.gpt.get_style_emb(mel_chunk.to(self.device), None)
                 style_embs.append(style_emb)
-
             cond_latent = torch.stack(style_embs).mean(dim=0)
         else:
             mel = wav_to_mel_cloning(
@@ -477,7 +496,6 @@ class Xtts(BaseTTS):
                 n_mels=80,
             )
             cond_latent = self.gpt.get_style_emb(mel.to(self.device))
-        
         return cond_latent.transpose(1, 2)
 
     @torch.inference_mode()

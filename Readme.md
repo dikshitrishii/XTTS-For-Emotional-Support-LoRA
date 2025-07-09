@@ -128,6 +128,13 @@ CUDA_VISIBLE_DEVICES=0 python train_gpt_default_xtts.py \
 --lr 5e-5 \
 --save_step 750
 ```
+## For LoRA Finetuning
+python train_perceiver_lora.py
+--model_ckpt XTTS_v2.0_original_model_files/model.pth   --config_json XTTS_v2.0_original_model_files/config.json   --train_csv new_data/metadata_abs.csv 
+--out_dir lora_runs   
+--epochs 10   
+--batch_size 8 
+
 
 ## 7. Usage Example
 
