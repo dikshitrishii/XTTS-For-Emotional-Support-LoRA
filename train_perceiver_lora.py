@@ -28,7 +28,7 @@ class PerceiverLoraDataset(Dataset):
         
         # Use pandas for more robust CSV parsing
         try:
-            df = pd.read_csv(csv_path, header=0, sep='|')
+            df = pd.read_csv(csv_path, header=None, sep='|')
             
             if df.shape[1] >= 2:
                 self.wav_paths = df.iloc[:, 0].tolist()
@@ -338,12 +338,12 @@ def train_perceiver_step(model: Xtts,
         # Stack conditioning latents
         conditioning_latents = torch.stack(conditioning_latents).squeeze(1)  # [batch_size, features, time]
         
-        
-        #YOU HAVE TO ADD ALL THE LOSSES HERE
+        #we need to add all the loss functions here
         # For simplicity, we will use a basic reconstruction loss
-        # This is a placeholder for more complex losses you might want to implement
+        # This is a placeholder; you can replace it with your actual loss function
         
-        # Create a simple reconstruction loss
+        
+        # Creating a simple reconstruction loss
         # Target: try to reconstruct the input conditioning
         target = conditioning_latents.detach()  # Use current output as target
         

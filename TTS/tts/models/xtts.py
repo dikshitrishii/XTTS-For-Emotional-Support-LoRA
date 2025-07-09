@@ -234,7 +234,7 @@ class XttsArgs(Coqpit):
 
     # Perceiver LoRA configuration
     use_perceiver_lora: bool = False  # Default False for normal loading
-    perceiver_lora_rank: int = 64
+    perceiver_lora_rank: int = 8
     perceiver_lora_alpha: int = 16
     perceiver_lora_dropout: float = 0.05
 
